@@ -14,12 +14,13 @@ import math
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-  query = f'SELECT EE_consumption, company, location FROM "sensor_data"'
+  
+  '''query = f'SELECT EE_consumption, company, location FROM "sensor_data"'
   EE_consumptions_gen = client.query(query).get_points()
   for value in EE_consumptions_gen:
       company, location = value['company'], value['location']
       EE_consumptions[company, location] = value['EE_consumption']
-      command[company, location] = {'heater_pwm' : 0, 'air_cond_pwm' : 0, "vent_pwm" : 0, 'dehum_pwm' : 0, 'pump_pwm' : 0}
+      command[company, location] = {'heater_pwm' : 0, 'air_cond_pwm' : 0, "vent_pwm" : 0, 'dehum_pwm' : 0, 'pump_pwm' : 0}'''
   asyncio.create_task(main())
   yield
 
@@ -27,15 +28,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # InfluxDB connection details
-INFLUXDB_HOST = "localhost"
+"""INFLUXDB_HOST = "localhost"
 INFLUXDB_PORT = 8086
 INFLUXDB_DATABASE = "smart_zero_carbone"
 INFLUXDB_USERNAME = "admin"  # Replace with your actual username
-INFLUXDB_PASSWORD = os.getenv("INFLUXDB_PASSWORD")
+INFLUXDB_PASSWORD = os.getenv("INFLUXDB_PASSWORD")"""
 
 # Initialize InfluxDB Client
-client = InfluxDBClient(host=INFLUXDB_HOST, port=INFLUXDB_PORT, username=INFLUXDB_USERNAME, password=INFLUXDB_PASSWORD)
-client.switch_database(INFLUXDB_DATABASE)
+'''client = InfluxDBClient(host=INFLUXDB_HOST, port=INFLUXDB_PORT, username=INFLUXDB_USERNAME, password=INFLUXDB_PASSWORD)
+client.switch_database(INFLUXDB_DATABASE)'''
 
 origins = [
     "http://127.0.0.1:5500",
@@ -65,11 +66,12 @@ async def aggregate_sensors_data():
   for (company, location), new_data in received_batches.items():
     buffer[company, location].update(new_data)
     avg_power = new_data.get("power", 0)
-    EE_consumptions[company, location] += avg_power/(1000*3600)
+    old_EE_consumption = EE_consumptions[company, location].get("EE_consumption", 0)
+    EE_consumptions[company, location] = old_EE_consumption + avg_power/(1000*3600)
     buffer[company, location]['EE_consumption'] = EE_consumptions[company, location]
   received_batches.clear()
 
-async def handle_db_queries():
+"""async def handle_db_queries():
     json_body = []
     try:
         for company, location in buffer.keys():
@@ -107,7 +109,7 @@ async def handle_db_queries():
     
     except Exception as e:
         logging.error(f"Error writing data to InfluxDB: {e}")
-        raise HTTPException(status_code=500, detail=f"Error writing data to InfluxDB: {e}")
+        raise HTTPException(status_code=500, detail=f"Error writing data to InfluxDB: {e}")"""
 
 async def regulator():
     for company, location in command.keys():
@@ -133,7 +135,7 @@ async def main():
   while True:
     await asyncio.sleep(1)
     asyncio.create_task(aggregate_sensors_data())
-    asyncio.create_task(handle_db_queries())
+    #asyncio.create_task(handle_db_queries())
     regulator_task = asyncio.create_task(regulator())
     event.set()
 
@@ -177,7 +179,7 @@ async def websocket_endpoint(websocket: WebSocket):
             active_connections.remove(websocket)
             print("Client disconnected")
 
-@app.get("/search_company/")
+'''@app.get("/search_company/")
 async def get_data(company_name : str):
     # InfluxQL query to fetch data
     query = f'SELECT * FROM "sensor_data" WHERE "company" = \'{company_name}\' ORDER BY time DESC'
@@ -187,7 +189,7 @@ async def get_data(company_name : str):
         result = client.query(query)
         return list(result.get_points()) # Return the result as a list of data points
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error querying InfluxDB: {e}")
+        raise HTTPException(status_code=500, detail=f"Error querying InfluxDB: {e}")'''
     
 @app.post("/sensors_data/")
 async def post_sensors_data(data : SensorData):
