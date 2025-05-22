@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
       company, location = value['company'], value['location']
       EE_consumptions[company, location] = value.get('EE_consumption', 0)
       command[company, location] = {'heater_pwm' : 0, 'air_cond_pwm' : 0, "vent_pwm" : 0, 'dehum_pwm' : 0, 'pump_pwm' : 0}
-  await main()
+  asyncio.create_task(main())
   yield
 
 
