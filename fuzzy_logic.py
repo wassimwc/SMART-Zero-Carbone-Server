@@ -4,8 +4,8 @@ from skfuzzy import control as ctrl
 import matplotlib.pyplot as plt
 
 # 1. Define fuzzy input variables
-temp = ctrl.Antecedent(np.arange(-20, 61, 1), 'temp')
-hum = ctrl.Antecedent(np.arange(0, 101, 1), 'hum')
+temp = ctrl.Antecedent(np.arange(-20, 61, 1), 'temperature')
+hum = ctrl.Antecedent(np.arange(0, 101, 1), 'humidity')
 voc = ctrl.Antecedent(np.arange(0, 2001), 'voc')
 co2 = ctrl.Antecedent(np.arange(0, 6000), 'co2')
 
@@ -111,3 +111,17 @@ air_cond_sys = ctrl.ControlSystemSimulation(air_cond_ctrl)
 voc_ventilation_sys = ctrl.ControlSystemSimulation(voc_ventilation_ctrl)
 co2_ventilation_sys = ctrl.ControlSystemSimulation(co2_ventilation_ctrl)
 hum_dehum_sys = ctrl.ControlSystemSimulation(hum_dehum_ctrl)
+systems = {
+  "heater_sys" : heater_sys,
+  "air_cond_sys" : air_cond_sys,
+  "voc_ventilation_sys" : voc_ventilation_sys,
+  "co2_ventilation_sys" : co2_ventilation_sys,
+  "hum_dehum_sys" : hum_dehum_sys
+}
+env = {
+  "heater_sys" : "temperature",
+  "air_cond_sys" : "temperature",
+  "voc_ventilation_sys" : "voc",
+  "co2_ventilation_sys" : "co2",
+  "hum_dehum_sys" : "humidity"
+}
