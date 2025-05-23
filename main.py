@@ -9,22 +9,26 @@ import fuzzy_logic as fz
 import asyncio
 import logging
 import os
-import math
 
+buffer = defaultdict(dict)
+received_batches = defaultdict(dict)
+EE_consumptions = defaultdict(dict)
+command = defaultdict(dict)
+act_event = asyncio.Event()
+sen_event = asyncio.Event()
+sen_event.set()
+regulator_task = None
+aggregate_task = None
+time_delay = 3
+sys_to_command = {
+  "heater_sys" : "heater_pwm",
+  "air_cond_sys" : "air_cond_pwm",
+  "voc_ventilation_sys" : "vent_pwm1",
+  "co2_ventilation_sys" : "vent_pwm2",
+  "hum_dehum_sys" : "dehum_pwm"
+}
+origins = []
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-  query = f'SELECT EE_consumption, company, location FROM "sensor_data"'
-  gen = client.query(query).get_points()
-  for value in gen:
-      company, location = value['company'], value['location']
-      EE_consumptions[company, location] = value.get('EE_consumption', 0)
-      command[company, location] = {'heater_pwm' : 0, 'air_cond_pwm' : 0, "vent_pwm" : 0, 'dehum_pwm' : 0, 'pump_pwm' : 0}
-  await main()
-  yield
-
-
-app = FastAPI(lifespan=lifespan)
 
 # InfluxDB connection details
 INFLUXDB_HOST = "localhost"
@@ -37,11 +41,22 @@ INFLUXDB_PASSWORD = os.getenv("INFLUXDB_PASSWORD")
 client = InfluxDBClient(host=INFLUXDB_HOST, port=INFLUXDB_PORT, username=INFLUXDB_USERNAME, password=INFLUXDB_PASSWORD)
 client.switch_database(INFLUXDB_DATABASE)
 
-origins = [
-    "http://127.0.0.1:5500",
-    "http://localhost:5500",
-    "http://192.168.1.12:5500"
-]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+  query = f'SELECT LAST(EE_consumption) FROM sensor_data GROUP BY company, location'
+  gen = client.query(query).get_points()
+  for value in gen:
+      company, location = value['company'], value['location']
+      EE_consumptions[company, location] = value.get('EE_consumption', 0)
+      command[company, location] = {'heater_pwm' : 0, 'air_cond_pwm' : 0, "vent_pwm1" : 0, "vent_pwm2" : 0, 'dehum_pwm' : 0, 'pump_pwm' : 0}
+  asyncio.create_task(main())
+  yield
+
+
+app = FastAPI(lifespan=lifespan)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,15 +66,15 @@ app.add_middleware(
     allow_headers=["*"],    # Allow all headers
 )
 
-buffer = defaultdict(dict)
-received_batches = defaultdict(dict)
-EE_consumptions = defaultdict(dict)
-command = defaultdict(dict)
-act_event = asyncio.Event()
-sen_event = asyncio.Event()
-sen_event.set()
-regulator_task = None
-time_delay = 3
+async def main():
+  global regulator_task, aggregate_task
+  while True:
+    await asyncio.sleep(time_delay)
+    aggregate_task = asyncio.create_task(aggregate_sensors_data())
+    regulator_task = asyncio.create_task(regulator())
+    asyncio.create_task(handle_db_queries())
+    act_event.set()
+    sen_event.set()
 
 
 async def aggregate_sensors_data():
@@ -73,6 +88,7 @@ async def aggregate_sensors_data():
   received_batches.clear()
 
 async def handle_db_queries():
+    await aggregate_task
     json_body = []
     try:
         for company, location in buffer.keys():
@@ -82,42 +98,20 @@ async def handle_db_queries():
                     "company": company,
                     "location": location
                 },
-                "fields": {
-                    "temperature": buffer[company, location].get("temperature", float('nan')),
-                    "humidity": buffer[company, location].get("humidity", float('nan')),
-                    "co2": buffer[company, location].get("co2", float('nan')),
-                    "o2": buffer[company, location].get("o2", float('nan')),
-                    "voc": buffer[company, location].get("voc", float('nan')),
-                    "renewable_EE": buffer[company, location].get("renewable_EE", float('nan')),
-                    "EE_consumption": buffer[company, location].get('EE_consumption', float('nan')),
-                    "power": buffer[company, location].get("power", float('nan')),
-                    "power_factor": buffer[company, location].get("power_factor", float('nan')),
-                    "soil_moisure": buffer[company, location].get("soil_moisure", float('nan')) 
-                }
+                "fields": buffer[company, location]
             }
             json_body.append(data_element)
             
-            # Check for missing data (NaN)
-            if any(math.isnan(value) for value in data_element['fields'].values()):
-                missing_fields = [key for key, value in data_element['fields'].items() if math.isnan(value)]
-                logging.warning(f"Missing data for company '{company}' at location '{location}': {missing_fields}")
-                
-        
         # Write all data points at once
         client.write_points(json_body)
         
-    
+
     except Exception as e:
         logging.error(f"Error writing data to InfluxDB: {e}")
         raise HTTPException(status_code=500, detail=f"Error writing data to InfluxDB: {e}")
-sys_to_command = {
-  "heater_sys" : "heater_pwm",
-  "air_cond_sys" : "air_cond_pwm",
-  "voc_ventilation_sys" : "vent_pwm",
-  "co2_ventilation_sys" : "vent_pwm",
-  "hum_dehum_sys" : "dehum_pwm"
-}
+
 async def regulator():
+    await aggregate_task
     for company, location in buffer.keys():
         for sys_name, sys in fz.systems.items():
             cond = fz.env[sys_name]
@@ -125,39 +119,13 @@ async def regulator():
             if value :
                 sys.input[cond] = value
                 sys.compute()
-        command[company, location]['heater_pwm'] = fz.heater_sys.output['pwm']
-        command[company, location]['air_cond_pwm'] = fz.air_cond_sys.output['pwm']
-        command[company, location]['vent_pwm'] = max(fz.voc_ventilation_sys.output.get('pwm', 0), fz.co2_ventilation_sys.output.get('pwm', 0))
-        command[company, location]['dehum_pwm'] = fz.hum_dehum_sys.output['pwm']
+                command_name = sys_to_command[sys_name]
+                command[company, location][command_name] = sys.output["pwm"]
 
 
-async def main():
-  global regulator_task
-  while True:
-    await asyncio.sleep(time_delay)
-    asyncio.create_task(aggregate_sensors_data())
-    regulator_task = asyncio.create_task(regulator())
-    asyncio.create_task(handle_db_queries())
-    act_event.set()
-    sen_event.set()
-
-
-class SensorData(BaseModel):
-    company: str 
-    location: str
-    temperature: Optional[float] = None
-    humidity: Optional[float] = None
-    co2: Optional[int] = None
-    o2: Optional[int] = None
-    voc: Optional[int] = None
-    voltage_rms: Optional[float] = None
-    current_rms: Optional[float] = None
-    avg_power : Optional[float] = None
-    renewable_EE : Optional[float] = None
-    soil_moisure : Optional[float] = None
 
 def calculate_power_factor(voltage_rms, current_rms, avg_power):
-	if(voltage_rms and current_rms and (avg_power is not None)):
+	if any(voltage_rms, current_rms, avg_power is not None):
 		power_factor = avg_power/(voltage_rms*current_rms)
 		return power_factor
 	return None
@@ -181,17 +149,6 @@ async def websocket_endpoint(websocket: WebSocket):
             actuators_active_connections.remove(websocket)
             print("Client disconnected")
 
-@app.get("/search_company/")
-async def get_data(company_name : str):
-    # InfluxQL query to fetch data
-    query = f'SELECT * FROM "sensor_data" WHERE "company" = \'{company_name}\' ORDER BY time DESC'
-
-    try:
-        # Execute the query and get the result
-        result = client.query(query)
-        return list(result.get_points()) # Return the result as a list of data points
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error querying InfluxDB: {e}")
 
 sensors_active_connections = []
     
@@ -208,26 +165,27 @@ async def receive_sensors_data(websocket : WebSocket):
             data = await websocket.receive_json()
             company = info["company"]
             location = info["location"]
-            power_factor = calculate_power_factor(
-                data.get("voltage_rms"), data.get("current_rms"), data.get("avg_power")
-            )
-
-            batch = {
-                "temperature": data.get("temperature"),
-                "voc": data.get("voc"),
-                "co2": data.get("co2"),
-                "humidity": data.get("humidity"),
-                "renewable_EE": data.get("renewable_EE"),
-                "EE_consumption": 0,
-                "power": data.get("avg_power"),
-                "o2": data.get("o2"),
-                "power_factor": power_factor,
-                "soil_moisure": data.get("soil_moisure")
-            }
-
-            received_batches[(company, location)] = batch
+            voltage_rms = data.pop("voltage_rms", None)
+            current_rms = data.pop("current_rms", None)
+            avg_power = data.pop("avg_power", None)
+            power_factor = calculate_power_factor(voltage_rms, current_rms, avg_power)
+            if power_factor:
+                data["power_factor"] = power_factor
+            received_batches[(company, location)] = data
             sen_event.clear()
     except WebSocketDisconnect:
         if websocket in sensors_active_connections:
             sensors_active_connections.remove(websocket)
             print("Client disconnected")
+
+@app.get("/search_company/")
+async def get_data(company_name : str):
+    # InfluxQL query to fetch data
+    query = f'SELECT * FROM "sensor_data" WHERE "company" = \'{company_name}\' ORDER BY time DESC LIMIT 10'
+
+    try:
+        # Execute the query and get the result
+        result = client.query(query)
+        return list(result.get_points()) # Return the result as a list of data points
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error querying InfluxDB: {e}")
