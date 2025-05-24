@@ -1,8 +1,6 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
 from influxdb import InfluxDBClient
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
 from collections import defaultdict
 from contextlib import asynccontextmanager
 import fuzzy_logic as fz
