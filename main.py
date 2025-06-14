@@ -43,7 +43,7 @@ client.switch_database(INFLUXDB_DATABASE)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-  query = f'SELECT LAST(EE_consumption) FROM sensor_data GROUP BY company, location'
+  query = f'SELECT LAST(EE_consumption), company, location FROM sensor_data GROUP BY company, location'
   gen = client.query(query).get_points()
   for value in gen:
       company, location = value['company'], value['location']
@@ -80,7 +80,7 @@ async def aggregate_sensors_data():
   for (company, location), new_data in received_batches.items():
     buffer[company, location].update(new_data)
     avg_power = new_data.get("power", 0)
-    old_EE_consumption = EE_consumptions[company, location].get("EE_consumption", 0)
+    old_EE_consumption = EE_consumptions[company, location]
     EE_consumptions[company, location] = old_EE_consumption + avg_power/(1000*3600)
     buffer[company, location]['EE_consumption'] = EE_consumptions[company, location]
   received_batches.clear()
