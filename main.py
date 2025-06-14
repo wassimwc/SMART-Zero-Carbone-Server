@@ -165,8 +165,8 @@ async def receive_sensors_data(websocket : WebSocket):
             location = info["location"]
             voltage_rms = data.pop("voltage_rms", None)
             current_rms = data.pop("current_rms", None)
-            avg_power = data.pop("avg_power", None)
-            power_factor = calculate_power_factor(voltage_rms, current_rms, avg_power)
+            avg_power = data.get("avg_power", None)
+            power_factor = data.pop("power_factor", None) or calculate_power_factor(voltage_rms, current_rms, avg_power)
             if power_factor:
                 data["power_factor"] = power_factor
             received_batches[(company, location)] = data
