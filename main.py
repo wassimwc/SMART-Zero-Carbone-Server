@@ -1,17 +1,16 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from influxdb import InfluxDBClient
 from fastapi.middleware.cors import CORSMiddleware
-from collections import defaultdict
 from contextlib import asynccontextmanager
 import fuzzy_logic as fz
 import asyncio
 import logging
 import os
 
-buffer = defaultdict(dict)
-received_batches = defaultdict(dict)
-EE_consumptions = defaultdict(dict)
-command = defaultdict(dict)
+buffer = {}
+EE_consumptions = {}
+command = {}
+received_batches = {}
 act_event = asyncio.Event()
 sen_event = asyncio.Event()
 sen_event.set()
@@ -79,10 +78,12 @@ async def aggregate_sensors_data():
   buffer.clear()
   for (company, location), new_data in received_batches.items():
     buffer[company, location].update(new_data)
-    avg_power = new_data.get("power", 0)
-    old_EE_consumption = EE_consumptions[company, location]
-    EE_consumptions[company, location] = old_EE_consumption + avg_power/(1000*3600)
-    buffer[company, location]['EE_consumption'] = EE_consumptions[company, location]
+    new_data_EEC = new_data([company, location]).get('EE_consumption', None)
+    if not(new_data_EEC):
+        avg_power = new_data.get("power", 0)
+        old_EE_consumption = EE_consumptions[company, location]
+        EE_consumptions[company, location] = old_EE_consumption + avg_power*time_delay/(1000*3600)
+        buffer[company, location]['EE_consumption'] = EE_consumptions[company, location]
   received_batches.clear()
 
 async def handle_db_queries():

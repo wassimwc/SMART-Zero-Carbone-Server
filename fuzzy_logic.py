@@ -125,3 +125,4 @@ env = {
   "co2_ventilation_sys" : "co2",
   "hum_dehum_sys" : "humidity"
 }
+print(heater_sys.__dict__)
